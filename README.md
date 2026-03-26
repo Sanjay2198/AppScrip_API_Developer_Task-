@@ -1,22 +1,35 @@
 # Trade Opportunities API
 
-A simple FastAPI service that:
+A FastAPI service for sector-based India trade analysis. It collects recent market/news signals, sends them to Gemini, and returns a structured Markdown report.
 
-- accepts an Indian sector name
-- fetches recent Google News RSS items
-- asks Gemini for a Markdown trade report
-- falls back to a basic Markdown summary if Gemini is unavailable
+## Architecture
 
-## Files
-
-This project is intentionally simple and currently uses a single application file:
+The project is split into simple layers to match the task requirements:
 
 ```text
-main.py
+main.py            FastAPI routes and error handling
+config.py          Environment configuration
+auth.py            API key authentication
+rate_limiter.py    In-memory rate limiting
+session_store.py   In-memory session tracking
+data_collector.py  Async Google News RSS collection
+ai_analyzer.py     Async Gemini analysis and fallback report generation
+schemas.py         Response models
+utils.py           Shared helpers
 requirements.txt
 .env.example
 README.md
 ```
+
+## Features
+
+- `GET /analyze/{sector}` returns a Markdown market analysis report
+- API key authentication with `X-Api-Key`
+- In-memory session tracking
+- In-memory rate limiting per API key
+- Async external calls with `httpx.AsyncClient`
+- Swagger docs at `/docs`
+- Graceful fallback report if Gemini is unavailable
 
 ## Setup
 
@@ -33,19 +46,19 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-3. Copy the env template and add your Gemini key.
+3. Create your local environment file.
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-4. Run the server.
+4. Add your Gemini API key to `.env`.
+
+5. Start the API.
 
 ```powershell
 python -m uvicorn main:app --reload
 ```
-
-The API will be available at `http://127.0.0.1:8000`.
 
 ## Environment Variables
 
@@ -57,15 +70,15 @@ The API will be available at `http://127.0.0.1:8000`.
 | `RATE_LIMIT_REQUESTS` | No | Requests allowed in each rate window |
 | `RATE_LIMIT_WINDOW` | No | Rate window in seconds |
 
-## Endpoints
+## API Endpoints
 
 ### `GET /`
 
-Basic API info.
+Returns service metadata.
 
 ### `GET /health`
 
-No authentication required. Returns service health and UTC timestamp.
+Returns health status and a UTC timestamp.
 
 ### `GET /analyze/{sector}`
 
@@ -78,7 +91,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/analyze/pharmaceuticals" `
   -Headers @{ "X-Api-Key" = "guest-key-123" }
 ```
 
-Successful responses return:
+Response shape:
 
 ```json
 {
@@ -98,6 +111,6 @@ Returns only the sessions created with that API key during the current server ru
 
 ## Notes
 
-- The Swagger UI is available at `http://127.0.0.1:8000/docs`.
-- Google News fetching is best-effort. If news cannot be fetched, the app still tries to produce a report.
-- If Gemini fails because of key, network, quota, or model issues, the endpoint returns a fallback Markdown report instead of crashing.
+- Storage is in-memory only. Restarting the server clears sessions and rate limit counters.
+- Data collection uses Google News RSS as a lightweight current-events source.
+- If Gemini fails because of model, key, quota, or network issues, the API still returns a Markdown fallback report.
