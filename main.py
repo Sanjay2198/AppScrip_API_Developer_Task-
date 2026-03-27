@@ -23,9 +23,6 @@ Submit an Indian sector name to get a Markdown trade report powered by Google Ne
 
 ## Authentication
 Pass your key in the `X-Api-Key` header. Demo key: `guest-key-123`
-
-## Rate limit
-10 requests per hour per key.
 """,
 )
 

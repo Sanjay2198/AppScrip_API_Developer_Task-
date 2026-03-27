@@ -1,9 +1,7 @@
 import time
 from collections import defaultdict
 from typing import DefaultDict, List
-
 from fastapi import HTTPException
-
 from config import settings
 
 

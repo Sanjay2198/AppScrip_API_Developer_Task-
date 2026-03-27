@@ -3,9 +3,7 @@ import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import List
-
 import httpx
-
 from utils import clean_text
 
 logger = logging.getLogger(__name__)
