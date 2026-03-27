@@ -101,11 +101,14 @@ async def _try_gemini(prompt: str, client: httpx.AsyncClient) -> str:
 
     for model in ["gemini-2.0-flash", "gemini-2.0-flash-lite"]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        response = await client.post(
-            url,
-            headers={"x-goog-api-key": settings.gemini_api_key},
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-        )
+        try:
+            response = await client.post(
+                url,
+                headers={"x-goog-api-key": settings.gemini_api_key},
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+            )
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            raise AnalysisServiceError(f"Gemini connection error: {e}", status_code=502)
         if response.status_code == 404:
             continue
         if response.status_code == 429:
@@ -128,11 +131,15 @@ async def _try_openrouter(prompt: str, client: httpx.AsyncClient) -> str:
 
     headers = {"Authorization": f"Bearer {settings.openrouter_api_key}"}
     for model in FREE_MODELS:
-        response = await client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=headers,
-            json={"model": model, "messages": [{"role": "user", "content": prompt}]},
-        )
+        try:
+            response = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json={"model": model, "messages": [{"role": "user", "content": prompt}]},
+            )
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            logger.warning("OpenRouter connection error for %s: %s", model, e)
+            continue
         if response.status_code == 404:
             logger.warning("OpenRouter model %s not found, trying next...", model)
             continue

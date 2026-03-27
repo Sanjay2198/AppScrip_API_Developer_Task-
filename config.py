@@ -11,6 +11,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 @dataclass(frozen=True)
 class Settings:
+    gemini_api_key: str
     openrouter_api_key: str
     api_keys: List[str]
     rate_limit_requests: int
@@ -18,6 +19,7 @@ class Settings:
 
 
 settings = Settings(
+    gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
     openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
     api_keys=[
         key.strip()

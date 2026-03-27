@@ -1,9 +1,7 @@
 import logging
 from typing import Any, Dict
-
 from fastapi import Depends, FastAPI, HTTPException, Path, Request
 from fastapi.responses import JSONResponse
-
 from ai_analyzer import AnalysisServiceError, build_fallback_report, generate_market_report
 from auth import verify_api_key
 from data_collector import collect_market_news
@@ -22,7 +20,7 @@ app = FastAPI(
 Submit an Indian sector name to get a Markdown trade report powered by Google News and Gemini AI.
 
 ## Authentication
-Pass your key in the `X-Api-Key` header. Demo key: `guest-key-123`
+Pass your key in the `X-Api-Key` header. Demo key: `guest-key-123` `demo-key-456`
 """,
 )
 
