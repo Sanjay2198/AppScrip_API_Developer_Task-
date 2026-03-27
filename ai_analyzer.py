@@ -30,11 +30,11 @@ Write the full response in Markdown with this exact structure:
 """
 
 FREE_MODELS = [
-    "meta-llama/llama-3.1-8b-instruct:free",
-    "meta-llama/llama-3-8b-instruct:free",
-    "google/gemma-2-9b-it:free",
-    "microsoft/phi-3-mini-128k-instruct:free",
-    "qwen/qwen-2-7b-instruct:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "stepfun/step-3.5-flash:free",
+    "arcee-ai/trinity-large-preview:free",
+    "liquid/lfm-2.5-1.2b-instruct:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
 ]
 
 
@@ -94,34 +94,73 @@ trade volumes, regulatory changes, investment flows, and market dynamics.
 """
 
 
-async def generate_market_report(sector: str, news_items: List[str]) -> str:
-    if not settings.openrouter_api_key:
-        raise AnalysisServiceError("OPENROUTER_API_KEY is not configured.", status_code=503)
+async def _try_gemini(prompt: str, client: httpx.AsyncClient) -> str:
+    """Try Gemini API first."""
+    if not settings.gemini_api_key:
+        raise AnalysisServiceError("No Gemini key.", status_code=503)
 
-    prompt = build_prompt(sector, news_items)
+    for model in ["gemini-2.0-flash", "gemini-2.0-flash-lite"]:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        response = await client.post(
+            url,
+            headers={"x-goog-api-key": settings.gemini_api_key},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+        )
+        if response.status_code == 404:
+            continue
+        if response.status_code == 429:
+            raise AnalysisServiceError("Gemini rate limit. Try again later.", status_code=429)
+        if not response.is_success:
+            raise AnalysisServiceError(f"Gemini error {response.status_code}", status_code=502)
+        candidates = response.json().get("candidates", [])
+        text = candidates[0]["content"]["parts"][0]["text"].strip() if candidates else ""
+        if text:
+            logger.info("Success with Gemini model: %s", model)
+            return text
+
+    raise AnalysisServiceError("Gemini models not available.", status_code=502)
+
+
+async def _try_openrouter(prompt: str, client: httpx.AsyncClient) -> str:
+    """Fallback to OpenRouter free models."""
+    if not settings.openrouter_api_key:
+        raise AnalysisServiceError("No OpenRouter key.", status_code=503)
+
     headers = {"Authorization": f"Bearer {settings.openrouter_api_key}"}
+    for model in FREE_MODELS:
+        response = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json={"model": model, "messages": [{"role": "user", "content": prompt}]},
+        )
+        if response.status_code == 404:
+            logger.warning("OpenRouter model %s not found, trying next...", model)
+            continue
+        if response.status_code == 429:
+            raise AnalysisServiceError("OpenRouter rate limit. Try again later.", status_code=429)
+        if not response.is_success:
+            logger.warning("OpenRouter model %s failed: %s", model, response.text[:80])
+            continue
+        logger.info("Success with OpenRouter model: %s", model)
+        return response.json()["choices"][0]["message"]["content"]
+
+    raise AnalysisServiceError("All OpenRouter models failed.", status_code=502)
+
+
+async def generate_market_report(sector: str, news_items: List[str]) -> str:
+    prompt = build_prompt(sector, news_items)
 
     async with httpx.AsyncClient(timeout=60) as client:
-        for model in FREE_MODELS:
-            try:
-                response = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers,
-                    json={"model": model, "messages": [{"role": "user", "content": prompt}]},
-                )
-                if response.status_code == 404:
-                    logger.warning("Model %s not found, trying next...", model)
-                    continue
-                if response.status_code == 429:
-                    raise AnalysisServiceError("Rate limit hit. Try again in a minute.", status_code=429)
-                if not response.is_success:
-                    logger.warning("Model %s failed: %s", model, response.text[:100])
-                    continue
-                logger.info("Success with model: %s", model)
-                return response.json()["choices"][0]["message"]["content"]
-            except AnalysisServiceError:
-                raise
-            except httpx.ConnectError:
-                raise AnalysisServiceError("Cannot reach OpenRouter. Check your network.", status_code=503)
+        # Try Gemini first
+        try:
+            return await _try_gemini(prompt, client)
+        except AnalysisServiceError as e:
+            logger.warning("Gemini failed (%s), trying OpenRouter...", e.message)
 
-    raise AnalysisServiceError("All AI models failed.", status_code=502)
+        # Fallback to OpenRouter
+        try:
+            return await _try_openrouter(prompt, client)
+        except AnalysisServiceError:
+            raise
+
+    raise AnalysisServiceError("All AI providers failed.", status_code=502)
