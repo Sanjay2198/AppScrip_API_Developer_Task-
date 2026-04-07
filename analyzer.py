@@ -1,6 +1,13 @@
+import asyncio
+import html
 import logging
+import re
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from typing import List
+
 import httpx
+
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -45,11 +52,50 @@ class AnalysisServiceError(Exception):
         self.status_code = status_code
 
 
-def build_prompt(sector: str, news_items: List[str]) -> str:
-    news_block = "\n".join(f"- {item}" for item in news_items)
-    if not news_block:
-        news_block = "- No live news available. Use general sector knowledge and state assumptions clearly."
-    return PROMPT_TEMPLATE.format(sector=sector.title(), news_block=news_block)
+def _clean(value: str) -> str:
+    if not value:
+        return ""
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = html.unescape(value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+async def _fetch_query(client: httpx.AsyncClient, query: str) -> List[str]:
+    url = f"https://news.google.com/rss/search?q={query.replace(' ', '+')}&hl=en-IN&gl=IN&ceid=IN:en"
+    response = await client.get(url)
+    response.raise_for_status()
+    root = ET.fromstring(response.text)
+    items: List[str] = []
+    for item in root.findall(".//item")[:4]:
+        title = _clean(item.findtext("title", ""))
+        desc = _clean(item.findtext("description", ""))
+        line = title if not desc else f"{title} - {desc}"
+        if line:
+            items.append(line)
+    return items
+
+
+async def collect_market_news(sector: str) -> List[str]:
+    year = datetime.now(timezone.utc).year
+    queries = [
+        f"{sector} India trade {year}",
+        f"{sector} India export import market",
+        f"{sector} India investment opportunities",
+    ]
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        results = await asyncio.gather(*[_fetch_query(client, q) for q in queries], return_exceptions=True)
+
+    items: List[str] = []
+    seen: set = set()
+    for query, result in zip(queries, results):
+        if isinstance(result, Exception):
+            logger.warning("News search failed for '%s': %s", query, result)
+            continue
+        for line in result:
+            if line.lower() not in seen:
+                seen.add(line.lower())
+                items.append(line)
+    return items[:9]
 
 
 def build_fallback_report(sector: str, news_items: List[str], reason: str) -> str:
@@ -95,10 +141,8 @@ trade volumes, regulatory changes, investment flows, and market dynamics.
 
 
 async def _try_gemini(prompt: str, client: httpx.AsyncClient) -> str:
-    """Try Gemini API first."""
     if not settings.gemini_api_key:
         raise AnalysisServiceError("No Gemini key.", status_code=503)
-
     for model in ["gemini-2.0-flash", "gemini-2.0-flash-lite"]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         try:
@@ -120,15 +164,12 @@ async def _try_gemini(prompt: str, client: httpx.AsyncClient) -> str:
         if text:
             logger.info("Success with Gemini model: %s", model)
             return text
-
     raise AnalysisServiceError("Gemini models not available.", status_code=502)
 
 
 async def _try_openrouter(prompt: str, client: httpx.AsyncClient) -> str:
-    """Fallback to OpenRouter free models."""
     if not settings.openrouter_api_key:
         raise AnalysisServiceError("No OpenRouter key.", status_code=503)
-
     headers = {"Authorization": f"Bearer {settings.openrouter_api_key}"}
     for model in FREE_MODELS:
         try:
@@ -150,24 +191,19 @@ async def _try_openrouter(prompt: str, client: httpx.AsyncClient) -> str:
             continue
         logger.info("Success with OpenRouter model: %s", model)
         return response.json()["choices"][0]["message"]["content"]
-
     raise AnalysisServiceError("All OpenRouter models failed.", status_code=502)
 
 
 async def generate_market_report(sector: str, news_items: List[str]) -> str:
-    prompt = build_prompt(sector, news_items)
-
+    news_block = "\n".join(f"- {item}" for item in news_items) or "- No live news available. Use general sector knowledge."
+    prompt = PROMPT_TEMPLATE.format(sector=sector.title(), news_block=news_block)
     async with httpx.AsyncClient(timeout=60) as client:
-        # Try Gemini first
         try:
             return await _try_gemini(prompt, client)
         except AnalysisServiceError as e:
             logger.warning("Gemini failed (%s), trying OpenRouter...", e.message)
-
-        # Fallback to OpenRouter
         try:
             return await _try_openrouter(prompt, client)
         except AnalysisServiceError:
             raise
-
     raise AnalysisServiceError("All AI providers failed.", status_code=502)
