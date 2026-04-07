@@ -9,7 +9,7 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 Copy-Item .env.example .env
-python -m uvicorn main:app --reload
+python -m uvicorn main:app
 
 Open: `http://127.0.0.1:8000/docs`
 
