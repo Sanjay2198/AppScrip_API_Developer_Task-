@@ -83,8 +83,6 @@ app = FastAPI(
     title="Trade Opportunities API",
     version="1.0.0",
     description="""
-## Overview
-Submit an Indian sector name to get a Markdown trade report powered by Google News and Gemini AI.
 
 ## Authentication
 Pass your key in the `X-Api-Key` header. Demo keys: `guest-key-123` `demo-key-456`
